@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "id",
+    "date",
+    "event_type",
+    "actors",
+    "themes",
+    "constraints",
+    "beliefs",
+    "action",
+    "escalation_delta",
+    "risk_label"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "date": { "type": "string" },
+    "event_type": { "type": "string" },
+    "actors": { "type": "array", "items": { "type": "string" } },
+    "themes": { "type": "array", "items": { "type": "string" } },
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "beliefs": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "action": { "type": "string" },
+    "escalation_delta": { "type": "number" },
+    "risk_label": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    }
+  }
+}
