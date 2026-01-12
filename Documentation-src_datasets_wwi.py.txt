@@ -1,0 +1,182 @@
+Documentation: src/datasets/wwi.py
+Purpose of this module
+wwi.py defines the data interface between:
+	•	historical event data (JSONL → Event)
+	•	symbolic representations (strings)
+	•	tensor representations (PyTorch)
+It is responsible for turning a causal narrative (“what happened up to time t”) into model-ready tensors.
+No modeling decisions are made here.
+
+Conceptual model
+Each training sample is:
+(events[0], events[1], …, events[t])  →  risk_label at time t
+This reflects the causal assumption:
+Escalation risk depends on the entire prior event history, not isolated events.
+
+High-level structure
+The module contains four logical components:
+	1	JSONL loader → raw Event objects
+	2	Dataset class → prefix-based samples
+	3	Symbol encoding → vocab → integers
+	4	Collate function → padded tensors + masks
+
+1. load_ww1_events
+def load_ww1_events(path: str) -> List[Event]:
+Responsibility
+	•	Reads a JSONL file
+	•	Parses each line independently
+	•	Constructs Event objects
+	•	Preserves chronological order
+Why JSONL
+	•	Each line is an independent observation
+	•	Supports streaming / partial reads
+	•	Allows appending new events without rewriting the file
+Failure modes (by design)
+	•	Invalid JSON → ValueError
+	•	Schema mismatch → ValueError
+This ensures no malformed historical data enters the pipeline.
+
+2. WWIDataset
+class WWIDataset(Dataset):
+What it represents
+A PyTorch Dataset where each index idx corresponds to a causal prefix:
+events[max(0, idx - max_len + 1) : idx + 1]
+This means:
+	•	Sample 0 → [event_0]
+	•	Sample 1 → [event_0, event_1]
+	•	Sample 2 → [event_0, event_1, event_2]
+	•	etc.
+Why prefix-based samples
+This allows the model to learn:
+	•	escalation dynamics
+	•	path dependence
+	•	irreversible commitments
+rather than treating events as IID data.
+
+Constructor parameters
+def __init__(
+    self,
+    events: List[Event],
+    vocabs: Dict[str, Vocab],
+    max_len: int = 32,
+    max_set_size: int = 8,
+)
+Parameter
+Meaning
+events
+Chronologically ordered WWI events
+vocabs
+String → int mappings
+max_len
+Max history length (truncate from the left)
+max_set_size
+Max actors/themes/constraints per event
+These bounds:
+	•	control memory
+	•	enforce fixed tensor shapes
+	•	avoid pathological events with huge sets
+
+_encode_event
+def _encode_event(self, event: Event) -> Dict[str, Any]:
+Encodes one event into integer IDs.
+Each field is treated according to its structure:
+Field
+Encoding strategy
+event_type
+single ID
+action
+single ID
+actors
+list of IDs (truncated)
+themes
+list of IDs (truncated)
+constraints
+list of IDs (truncated)
+Important:
+	•	Order inside sets is not assumed meaningful
+	•	These will later be pooled (averaged) in the encoder
+
+__getitem__
+def __getitem__(self, idx: int) -> Dict[str, Any]:
+Returns a single training example:
+{
+    "sequence": [encoded_event_0, ..., encoded_event_t],
+    "y": risk_label_at_t
+}
+Where:
+	•	"sequence" is variable-length
+	•	"y" is an integer in {0,1,2} (low, medium, high)
+
+3. collate_wwi
+def collate_wwi(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+Purpose
+Turns a list of variable-length sequences into fixed-size tensors suitable for batching.
+This is where padding happens.
+
+Output tensors
+Tensor
+Shape
+Meaning
+event_type
+[B, T]
+event-type IDs
+action
+[B, T]
+action IDs
+actors
+[B, T, K]
+actor IDs
+themes
+[B, T, K]
+theme IDs
+constraints
+[B, T, K]
+constraint IDs
+mask
+[B, T]
+valid timestep mask
+y
+[B]
+risk labels
+Where:
+	•	B = batch size
+	•	T = max prefix length in batch
+	•	K = max set size in batch
+
+Why the mask exists
+mask[b, t] = True  if timestep t is real
+mask[b, t] = False if timestep t is padding
+This allows the model to:
+	•	ignore padded timesteps
+	•	pool only over real history
+	•	avoid learning from artifacts
+
+Why your observed shapes are correct
+You saw:
+event_type [2, 2]
+actors     [2, 2, 3]
+This means:
+	•	batch size = 2
+	•	longest prefix length = 2
+	•	largest actor/theme/constraint set = 3
+Exactly consistent with your current data.
+
+Design invariants (important)
+These must always remain true:
+	1	Prefix order is chronological
+	2	Padding ID is 0
+	3	Mask explicitly marks valid timesteps
+	4	Labels align with final timestep
+	5	No learning logic in this file
+
+One-sentence summary
+wwi.py is the causal data-to-tensor bridge: it converts historical event sequences into padded, masked tensors so a neural model can learn escalation dynamics without ever seeing malformed or unordered data.
+
+Next step (when you’re ready)
+The next file is:
+src/models/encoder.py
+This is where we:
+	•	embed symbols
+	•	pool actor/theme sets
+	•	produce event-level vectors
+Say “ready for encoder” when you want to proceed.
